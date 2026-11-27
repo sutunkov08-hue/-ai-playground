@@ -864,6 +864,11 @@ function applyJointLimit(j, excess) {
 function updateHumans() {
   for (const h of humans) {
     if (h.stun > 0) h.stun--;
+    /* пока манекена держат мышью — он продолжает паниковать и вырываться */
+    if (grab.body && grab.body.plugin.pp && grab.body.plugin.pp.human === h && h.alive) {
+      if (h.state !== 'panic') h.state = 'panic';
+      h.stateTimer = Math.max(h.stateTimer, 90);
+    }
 
     /* ограничение углов суставов (колени/локти не выгибаются назад) */
     for (const j of h.joints) {
@@ -1009,6 +1014,18 @@ function controlHuman(h) {
   const speed = (panic ? WALK.speedPanic : WALK.speedWalk) * (1 + skill * .5);
 
   const lowerA = normAngle(lower.angle);
+  /* вставание: манекен лежит (упал) — активно встаёт, слабый баланс из лежачего не вытаскивает */
+  if (grounded && Math.abs(lowerA) > 1.0) {
+    h.recovering = 0;
+    Body.setAngularVelocity(upper, upper.angularVelocity * .6 - normAngle(upper.angle) * .28);
+    Body.setAngularVelocity(lower, lower.angularVelocity * .6 - lowerA * .22);
+    /* подгибаем ноги и отталкиваемся от земли, приподнимая корпус */
+    relSwing(h.jHipL, Math.sign(lowerA) * .8, .3);
+    relSwing(h.jHipR, Math.sign(lowerA) * .8, .3);
+    relSwing(h.jKneeL, .9, .3); relSwing(h.jKneeR, .9, .3);
+    Body.setVelocity(upper, { x: upper.velocity.x * .9, y: Math.min(upper.velocity.y, -1.2) });
+    return;
+  }
   /* потеря равновесия: входим в режим восстановления и не выходим, пока не выпрямимся (гистерезис) */
   if (Math.abs(lowerA) > WALK.tiltMax - skill * .2) h.recovering = 45;
   else if (Math.abs(lowerA) < .2) h.recovering = 0;
@@ -1062,6 +1079,7 @@ function controlHuman(h) {
   }
 
   /* шаг: бёдра качаются в противофазе (относительно корпуса), колени подгибаются, руки в противоходе */
+  if (!panic && Math.abs(lower.position.x + h.walkDir * 90) > WALL_X - 80) h.walkDir = -h.walkDir;
   h.phase += panic ? .26 : .14;
   const sw = Math.sin(h.phase) * (panic ? WALK.ampPanic : WALK.ampWalk);
   const bend = panic ? .8 : .55;
