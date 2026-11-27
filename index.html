@@ -147,12 +147,14 @@
     <b>ЛКМ</b> — схватить / спавн выбранного<br>
     <b>F</b> — использовать (огонь, детонация)<br>
     <b>Q / E</b> — спавн с поворотом влево / вправо<br>
-    <b>ПКМ (тащить)</b> — двигать камеру<br>
-    <b>Колесо</b> — зум &nbsp; <b>WASD</b> — камера<br>
+    <b>Стрелки / ПКМ (тащить)</b> — камера<br>
+    <b>A / D</b> — вращать объект в руке<br>
+    <b>Колесо</b> — зум &nbsp; <b>W/S</b> — камера по вертикали<br>
     <b>Space</b> — замедление времени<br>
     <b>Del / Backspace</b> — удалить объект<br>
     <b>ПКМ (клик)</b> — меню объекта<br>
-    <b>P</b> — пауза &nbsp; <b>Esc</b> — отмена
+    <b>P</b> — пауза &nbsp; <b>Esc</b> — отмена<br>
+    <i>Манекены стоят, ходят и паникуют от боли</i>
   </div>
 </div>
 
@@ -259,6 +261,9 @@ function updateCamera() {
 const particles = [];
 function addP(p) {
   if (particles.length > 2600) return;
+  if (p.g == null) p.g = 0;          // защита от NaN: у всех частиц должны быть g и drag
+  if (p.drag == null) p.drag = 1;
+  if (!isFinite(p.x + p.y + p.vx + p.vy + (p.size || 0))) return;
   p.lifeMax = p.life;
   particles.push(p);
 }
@@ -532,27 +537,34 @@ function spawnHuman(x, y, rot = 0) {
   human.list = [head, lowerTorso, upperTorso, uArmL, uArmR, fArmL, fArmR,
                 thighL, thighR, shinL, shinR, footL, footR];
   human.head = head;
+  human.upper = upperTorso; human.lower = lowerTorso;
+  human.uArmL = uArmL; human.uArmR = uArmR;
+  human.thighL = thighL; human.thighR = thighR;
+  human.shinL = shinL; human.shinR = shinR;
+  human.footL = footL; human.footR = footR;
+  human.state = 'stand'; human.stateTimer = 120; human.walkDir = 1; human.phase = 0;
   for (const p of human.list) p.plugin.pp.human = human;
 
   /* Сустав: точечная связь + допустимый диапазон относительного угла */
-  const J = (a, pa, b, pb, min, max, hp) => {
+  const J = (a, pa, b, pb, min, max, hp, tone, name) => {
     const c = Constraint.create({ bodyA: a, pointA: pa, bodyB: b, pointB: pb, stiffness: .9, damping: .1, length: 0 });
-    const j = { c, a, b, rest: normAngle(b.angle - a.angle), min, max, hp, maxHp: hp, human, removed: false };
+    const j = { c, a, b, rest: normAngle(b.angle - a.angle), min, max, hp, maxHp: hp, human, removed: false, tone };
+    human[name] = j;
     human.joints.push(j);
     Composite.add(world, c);
   };
-  J(upperTorso, {x:0,y:-19}, head,       {x:0,y:12},  -.5,  .5, 120);   // шея
-  J(lowerTorso, {x:0,y:-13}, upperTorso, {x:0,y:18},  -.4,  .4, 220);   // позвоночник
-  J(upperTorso, {x:-15,y:-15}, uArmL, {x:0,y:-13}, -2.6, 2.6, 120);     // плечо L
-  J(upperTorso, {x: 15,y:-15}, uArmR, {x:0,y:-13}, -2.6, 2.6, 120);     // плечо R
-  J(uArmL, {x:0,y:13}, fArmL, {x:0,y:-12}, -2.3, .05, 100);             // локоть L
-  J(uArmR, {x:0,y:13}, fArmR, {x:0,y:-12}, -.05, 2.3, 100);             // локоть R
-  J(lowerTorso, {x:-8,y:13}, thighL, {x:0,y:-16}, -1.0, 1.0, 200);      // бедро L
-  J(lowerTorso, {x: 8,y:13}, thighR, {x:0,y:-16}, -1.0, 1.0, 200);      // бедро R
-  J(thighL, {x:0,y:16}, shinL, {x:0,y:-17}, -2.2, .05, 160);            // колено L
-  J(thighR, {x:0,y:16}, shinR, {x:0,y:-17}, -.05, 2.2, 160);            // колено R
-  J(shinL, {x:0,y:17}, footL, {x:0,y:-3}, -.5, .5, 150);                // ступня L
-  J(shinR, {x:0,y:17}, footR, {x:0,y:-3}, -.5, .5, 150);                // ступня R
+  J(upperTorso, {x:0,y:-19}, head,       {x:0,y:12},  -.5,  .5, 120, .04,  'jNeck');      // шея
+  J(lowerTorso, {x:0,y:-13}, upperTorso, {x:0,y:18},  -.4,  .4, 220, .06,  'jSpine');     // позвоночник
+  J(upperTorso, {x:-15,y:-15}, uArmL, {x:0,y:-13}, -2.6, 2.6, 120, .015, 'jShoulderL');  // плечо L
+  J(upperTorso, {x: 15,y:-15}, uArmR, {x:0,y:-13}, -2.6, 2.6, 120, .015, 'jShoulderR');  // плечо R
+  J(uArmL, {x:0,y:13}, fArmL, {x:0,y:-12}, -2.3, .05, 100, .04, 'jElbowL');              // локоть L
+  J(uArmR, {x:0,y:13}, fArmR, {x:0,y:-12}, -.05, 2.3, 100, .04, 'jElbowR');              // локоть R
+  J(lowerTorso, {x:-8,y:13}, thighL, {x:0,y:-16}, -1.0, 1.0, 200, .06, 'jHipL');         // бедро L
+  J(lowerTorso, {x: 8,y:13}, thighR, {x:0,y:-16}, -1.0, 1.0, 200, .06, 'jHipR');         // бедро R
+  J(thighL, {x:0,y:16}, shinL, {x:0,y:-17}, -2.2, .05, 160, .06, 'jKneeL');              // колено L
+  J(thighR, {x:0,y:16}, shinR, {x:0,y:-17}, -.05, 2.2, 160, .06, 'jKneeR');              // колено R
+  J(shinL, {x:0,y:17}, footL, {x:0,y:-3}, -.5, .5, 150, .05, 'jAnkleL');                 // ступня L
+  J(shinR, {x:0,y:17}, footR, {x:0,y:-3}, -.5, .5, 150, .05, 'jAnkleR');                 // ступня R
 
   human.partRemoved = b => {
     b.plugin.pp.removed = true;
@@ -589,6 +601,11 @@ function damagePart(partBody, dmg, point, opts = {}) {
   pp.damage = clamp(1 - pp.hp / pp.maxHp, 0, 1);
   h.totalDamage += dmg;
   h.stun = Math.max(h.stun, 150);
+  /* испуг: манекен убегает от источника урона */
+  if (h.alive) {
+    h.state = 'panic'; h.stateTimer = 300;
+    h.walkDir = (opts.dir == null || Math.cos(opts.dir) >= 0) ? 1 : -1;
+  }
   if (h.totalDamage > 150) h.alive = false;
   if (!opts.silent && dmg > 2.5) {
     bloodSpray(point.x, point.y, clamp(dmg, 2, 14), opts.dir, opts.spread == null ? Math.PI : opts.spread);
@@ -785,6 +802,7 @@ function explode(x, y, r, power) {
     if (pp.human) {
       damagePart(b, power * f * 2.6, b.position, { dir: Math.atan2(dir.y, dir.x) });
       const h = pp.human;
+      if (h.alive) { h.state = 'panic'; h.stateTimer = 360; h.walkDir = dir.x >= 0 ? 1 : -1; }
       for (const j of h.joints) {
         if (j.removed) continue;
         j.hp -= power * f * 3.5;
@@ -828,15 +846,8 @@ function updateHumans() {
       else if (rel < j.min) applyJointLimit(j, rel - j.min);
     }
 
-    /* слабая стабилизация стоя — отключается при нокауте или уроне */
-    if (h.alive && h.stun <= 0 && settings.gravity) {
-      const upper = h.list.find(p => p.plugin.pp.part === 'upperTorso');
-      const lower = h.list.find(p => p.plugin.pp.part === 'lowerTorso');
-      if (upper && !upper.plugin.pp.removed)
-        Body.setAngularVelocity(upper, upper.angularVelocity * .9 - normAngle(upper.angle) * .02);
-      if (lower && !lower.plugin.pp.removed)
-        Body.setAngularVelocity(lower, lower.angularVelocity * .9 - normAngle(lower.angle) * .012);
-    }
+    /* контроллер живого манекена: стоит, ходит, паникует (отключается при нокауте) */
+    if (h.alive && h.stun <= 0 && settings.gravity) controlHuman(h);
 
     /* кровотечение из оторванных конечностей */
     for (const p of h.list) {
@@ -850,6 +861,97 @@ function updateHumans() {
       }
     }
   }
+}
+
+/* ---------- Поведение манекена: стояние / ходьба / паника ---------- */
+const WALK = { kUpper: .03, kLower: .025, kUpRec: .05, kLowRec: .045, tiltMax: .55,
+               ampWalk: .4, ampPanic: .65, speedWalk: 1.1, speedPanic: 2.2,
+               steer: .06, leanWalk: .03, leanPanic: .12 };
+
+/* мышечный тонус: каждый сустав тянет к позе покоя — без него ноги складываются под гравитацией */
+function muscleTone(h) {
+  for (const j of h.joints) {
+    if (j.removed || j.a.plugin.pp.removed || j.b.plugin.pp.removed) continue;
+    const rel = normAngle(j.b.angle - j.a.angle - j.rest);
+    const corr = clamp(rel * j.tone, -.12, .12);
+    Body.setAngularVelocity(j.b, j.b.angularVelocity - corr);
+    Body.setAngularVelocity(j.a, j.a.angularVelocity + corr * .5);
+  }
+}
+
+/* качание сустава: цель задаётся как отклонение от позы покоя (относительный угол) */
+function relSwing(j, relTarget, k = .25) {
+  if (!j || j.removed || j.a.plugin.pp.removed || j.b.plugin.pp.removed) return;
+  const rel = normAngle(j.b.angle - j.a.angle - j.rest);
+  const corr = clamp((relTarget - rel) * k, -.3, .3);
+  Body.setAngularVelocity(j.b, j.b.angularVelocity - corr);
+  Body.setAngularVelocity(j.a, j.a.angularVelocity + corr * .4);
+}
+
+function controlHuman(h) {
+  const upper = h.upper, lower = h.lower;
+  if (!upper || !lower || upper.plugin.pp.removed || lower.plugin.pp.removed) return;
+
+  /* тонус работает всегда, пока манекен жив */
+  muscleTone(h);
+
+  const grounded = (h.footL && !h.footL.plugin.pp.removed && h.footL.position.y > FLOOR_TOP - 30) ||
+                   (h.footR && !h.footR.plugin.pp.removed && h.footR.position.y > FLOOR_TOP - 30);
+
+  /* смена состояний: паника затухает, потом случайные стояние/ходьба */
+  h.stateTimer--;
+  if (h.stateTimer <= 0) {
+    if (h.state === 'panic') { h.state = 'walk'; h.stateTimer = rand(180, 400); }
+    else if (Math.random() < .45) { h.state = 'walk'; h.walkDir = Math.random() < .5 ? -1 : 1; h.stateTimer = rand(200, 500); }
+    else { h.state = 'stand'; h.stateTimer = rand(240, 600); }
+  }
+
+  const panic = h.state === 'panic';
+  const speed = panic ? WALK.speedPanic : WALK.speedWalk;
+
+  const lowerA = normAngle(lower.angle);
+  if (Math.abs(lowerA) > WALK.tiltMax) {
+    /* потеря равновесия: усиленное восстановление, шаги прекращаются */
+    Body.setAngularVelocity(upper, upper.angularVelocity * .8 - normAngle(upper.angle) * WALK.kUpRec);
+    Body.setAngularVelocity(lower, lower.angularVelocity * .8 - lowerA * WALK.kLowRec);
+    relSwing(h.jHipL, 0, .12); relSwing(h.jHipR, 0, .12);
+    relSwing(h.jKneeL, 0, .12); relSwing(h.jKneeR, 0, .12);
+    Body.setVelocity(lower, { x: lower.velocity.x * .85, y: lower.velocity.y });
+    Body.setVelocity(upper, { x: upper.velocity.x * .85, y: upper.velocity.y });
+    return;
+  }
+
+  /* балансировка торса: цель — небольшой наклон вперёд при ходьбе */
+  const lean = h.state === 'stand' ? 0 : h.walkDir * (panic ? WALK.leanPanic : WALK.leanWalk);
+  Body.setAngularVelocity(upper, upper.angularVelocity * .85 - normAngle(upper.angle - lean) * WALK.kUpper);
+  Body.setAngularVelocity(lower, lower.angularVelocity * .85 - lowerA * WALK.kLower);
+
+  if (!grounded) return; /* в воздухе — только тонус и баланс корпуса */
+
+  if (h.state === 'stand') {
+    /* стояние = ходьба на месте с малой амплитудой: активный баланс вместо статичной позы */
+    h.phase += .1;
+    const swS = Math.sin(h.phase) * .18;
+    relSwing(h.jHipL, swS); relSwing(h.jHipR, -swS);
+    relSwing(h.jKneeL, -Math.max(0, Math.sin(h.phase)) * .25);
+    relSwing(h.jKneeR,  Math.max(0, -Math.sin(h.phase)) * .25);
+    Body.setVelocity(lower, { x: lower.velocity.x * .9, y: lower.velocity.y });
+    Body.setVelocity(upper, { x: upper.velocity.x * .9, y: upper.velocity.y });
+    return;
+  }
+
+  /* шаг: бёдра качаются в противофазе (относительно корпуса), колени подгибаются, руки в противоходе */
+  h.phase += panic ? .26 : .14;
+  const sw = Math.sin(h.phase) * (panic ? WALK.ampPanic : WALK.ampWalk);
+  const bend = panic ? .8 : .55;
+  relSwing(h.jHipL, sw);  relSwing(h.jHipR, -sw);
+  relSwing(h.jKneeL, -Math.max(0, Math.sin(h.phase)) * bend);
+  relSwing(h.jKneeR,  Math.max(0, -Math.sin(h.phase)) * bend);
+  relSwing(h.jShoulderL, -sw * .5); relSwing(h.jShoulderR, sw * .5);
+
+  /* движение корпуса: ведём верх и низ синхронно, чтобы не спотыкаться */
+  Body.setVelocity(lower, { x: lerp(lower.velocity.x, h.walkDir * speed, WALK.steer), y: lower.velocity.y });
+  Body.setVelocity(upper, { x: lerp(upper.velocity.x, h.walkDir * speed, WALK.steer), y: upper.velocity.y });
 }
 
 /* ================= 7. ИНСТРУМЕНТЫ: ЗАХВАТ, ВЕРЁВКА, СВАРКА ================= */
@@ -1119,10 +1221,20 @@ function handleFireKey() {
 }
 function handleCameraKeys() {
   const s = 12 / cam.zoom;
-  if (keys.KeyW || keys.ArrowUp)    cam.y -= s;
-  if (keys.KeyS || keys.ArrowDown)  cam.y += s;
-  if (keys.KeyA || keys.ArrowLeft)  cam.x -= s;
-  if (keys.KeyD || keys.ArrowRight) cam.x += s;
+  if (keys.ArrowUp)    cam.y -= s;
+  if (keys.ArrowDown)  cam.y += s;
+  if (keys.ArrowLeft)  cam.x -= s;
+  if (keys.ArrowRight) cam.x += s;
+  if (keys.KeyW) cam.y -= s;
+  if (keys.KeyS) cam.y += s;
+  /* A/D — вращать объект, удерживаемый мышью; если руки пусты — камера */
+  if (grab.body) {
+    if (keys.KeyA) Body.setAngularVelocity(grab.body, clamp(grab.body.angularVelocity - .025, -.3, .3));
+    if (keys.KeyD) Body.setAngularVelocity(grab.body, clamp(grab.body.angularVelocity + .025, -.3, .3));
+  } else {
+    if (keys.KeyA) cam.x -= s;
+    if (keys.KeyD) cam.x += s;
+  }
 }
 function updateCooldowns() {
   for (const b of Composite.allBodies(world)) {
